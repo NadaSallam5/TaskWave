@@ -46,6 +46,29 @@ The API is the only service attached to both networks. Postgres and Redis publis
 
 ---
 
+---
+
+## Short explanation
+
+**1. Why the API and worker are separate services.**
+The API must answer HTTP requests quickly. Job processing (email, image resize, exports, webhooks) is slow, so it runs in separate worker containers. This keeps the API responsive, lets workers be scaled independently (`--scale worker=3`), and means a crashing worker does not take the API down.
+
+**2. How the API and worker communicate through Redis.**
+They never talk to each other directly. The API stores the job in PostgreSQL and adds its ID to a Redis sorted set (`ZADD taskwave:queue`). Workers poll that queue with `ZPOPMIN`, which is atomic, so two workers never take the same job. When a worker finishes, it updates the job in PostgreSQL and publishes an event on the Redis pub/sub channel `taskwave:events`. The API subscribes to that channel and forwards the update to the browser through Server-Sent Events. Workers also write heartbeats to Redis, which is how the Workers page knows which workers are alive.
+
+**3. How containers resolve each other by Compose service name.**
+Compose puts the services on shared networks and runs an internal DNS server. Every service name becomes a hostname on those networks, so the API connects to `postgres:5432` and `redis:6379` (see `DATABASE_URL` and `REDIS_URL` in `compose.yaml`) instead of IP addresses, which change on every restart. Resolution only works between services on the same network: `backend_net` joins the API, worker, postgres and redis, while the frontend sits only on `frontend_net` and cannot reach the database.
+
+**4. How PostgreSQL data is persisted.**
+The `postgres_data` named volume is mounted at `/var/lib/postgresql/data`, so the database files live in the volume rather than in the container's writable layer. Containers can be deleted and recreated and the data stays. `schema.sql` is mounted into `/docker-entrypoint-initdb.d/` and runs only the first time, when the volume is empty. Redis uses the same approach with `redis_data` and AOF persistence, so queued jobs survive a restart too.
+
+**5. Why the frontend API URL must be reachable from the browser.**
+The React app runs in the user's browser, not inside a container. The browser knows nothing about Docker's internal DNS, so `http://api:3000` cannot be resolved there. `VITE_API_URL` must be an address the browser can reach (`http://localhost:3000`, or `http://<SERVER_IP>:3000` on a server) and port 3000 must be published. Vite bakes the value into the JavaScript bundle at build time, so changing it requires `docker compose up -d --build frontend`.
+
+**6. `docker compose down` vs `docker compose down -v`.**
+- `docker compose down` removes the containers and networks but **keeps the named volumes**. After `docker compose up -d`, users and jobs are still there (tested: I signed in again and the jobs were listed).
+- `docker compose down -v` also **deletes the volumes** (`postgres_data`, `redis_data`), which erases the database and the queue. On the next start Postgres initializes from scratch and runs `schema.sql` again.
+
 ## Project structure
 
 ```
