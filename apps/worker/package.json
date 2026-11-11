@@ -1,0 +1,17 @@
+{
+  "name": "taskwave-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/worker.js",
+    "dev": "node --watch src/worker.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "nanoid": "^5.1.2",
+    "pg": "^8.13.1",
+    "redis": "^4.7.0",
+    "zod": "^4.4.3"
+  }
+}
