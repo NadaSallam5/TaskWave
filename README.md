@@ -252,9 +252,3 @@ DevTools → Network shows the browser (page on `localhost:5173`) sending reques
 
 ---
 
-## Known limitations
-
-- Job processors (email, image resize, data export, webhook) are simulated: no real email, image, CSV file or HTTP request is produced.
-- A job popped by a worker that crashes mid-run is not re-queued automatically.
-- Retry re-enqueue uses an in-memory `setTimeout`, so pending retries are lost if the process restarts.
-- Beyond the `redis` client's built-in reconnect, there are no extra Redis reconnect guarantees for the worker.
