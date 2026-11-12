@@ -83,7 +83,7 @@ services:
       - backend_net
 
   frontend:
-    image: nadakhaled55/taskwave-frontend:latest
+    image: nadakhaled55/taskwave-frontend:2
     build:
       context: .
       dockerfile: apps/frontend/Dockerfile
