@@ -1,0 +1,72 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKERHUB_USER  = 'nadakhaled55'
+        IMAGE_NAME      = "${DOCKERHUB_USER}/taskwave-frontend"
+        IMAGE_TAG       = "${env.BUILD_NUMBER}"
+        VITE_API_URL    = 'http://localhost:3000'
+        REPO_PATH       = 'github.com/NadaSallam5/TaskWave.git'
+        TARGET_BRANCH   = 'jenkins-project'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps { checkout scm }
+        }
+
+        stage('Build image') {
+            steps {
+                sh '''
+                    docker build \
+                      -f apps/frontend/Dockerfile \
+                      --build-arg VITE_API_URL="$VITE_API_URL" \
+                      -t "$IMAGE_NAME:$IMAGE_TAG" \
+                      -t "$IMAGE_NAME:latest" .
+                '''
+            }
+        }
+
+        stage('Push image') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds',
+                                 usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
+                    sh '''
+                        echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
+                        docker push "$IMAGE_NAME:$IMAGE_TAG"
+                        docker push "$IMAGE_NAME:latest"
+                    '''
+                }
+            }
+        }
+
+        stage('Update compose tag (sed) and push') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'github-credentials',
+                                 usernameVariable: 'GH_USER', passwordVariable: 'GH_TOKEN')]) {
+                    sh '''
+                        set -e
+                        REPO_URL="https://${GH_USER}:${GH_TOKEN}@${REPO_PATH}"
+                        git config user.email "jenkins@taskwave.local"
+                        git config user.name  "Jenkins CI"
+
+                        # start from the newest commit of the branch
+                        git fetch "$REPO_URL" "$TARGET_BRANCH"
+                        git checkout -B "$TARGET_BRANCH" FETCH_HEAD
+
+                        # approach 1: sed - replace the tag after the last ":" on the frontend image line
+                        sed -i "/taskwave-frontend:/s|:[^:]*$|:${IMAGE_TAG}|" compose.yaml
+
+                        git add compose.yaml
+                        git commit -m "ci(frontend): set image tag to ${IMAGE_TAG}" || echo "nothing to commit"
+                        git push "$REPO_URL" "$TARGET_BRANCH"
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        always { sh 'docker logout || true' }
+    }
+}

@@ -1,0 +1,77 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKERHUB_USER = 'nadakhaled55'
+        API_IMAGE      = "${DOCKERHUB_USER}/taskwave-api"
+        WORKER_IMAGE   = "${DOCKERHUB_USER}/taskwave-worker"
+        REPO_PATH      = 'github.com/NadaSallam5/TaskWave.git'
+        TARGET_BRANCH  = 'jenkins-project'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                }
+            }
+        }
+
+        stage('Build images') {
+            steps {
+                sh '''
+                    docker build -f apps/api/Dockerfile \
+                      -t "$API_IMAGE:$IMAGE_TAG" -t "$API_IMAGE:latest" .
+                    docker build -f apps/worker/Dockerfile \
+                      -t "$WORKER_IMAGE:$IMAGE_TAG" -t "$WORKER_IMAGE:latest" .
+                '''
+            }
+        }
+
+        stage('Push images') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds',
+                                 usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
+                    sh '''
+                        echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
+                        docker push "$API_IMAGE:$IMAGE_TAG"
+                        docker push "$API_IMAGE:latest"
+                        docker push "$WORKER_IMAGE:$IMAGE_TAG"
+                        docker push "$WORKER_IMAGE:latest"
+                    '''
+                }
+            }
+        }
+
+        stage('Update compose tags (yq) and push') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'github-credentials',
+                                 usernameVariable: 'GH_USER', passwordVariable: 'GH_TOKEN')]) {
+                    sh '''
+                        set -e
+                        REPO_URL="https://${GH_USER}:${GH_TOKEN}@${REPO_PATH}"
+                        git config user.email "jenkins@taskwave.local"
+                        git config user.name  "Jenkins CI"
+
+                        git fetch "$REPO_URL" "$TARGET_BRANCH"
+                        git checkout -B "$TARGET_BRANCH" FETCH_HEAD
+
+                        # approach 2: yq - edit the YAML keys directly
+                        API_NEW="${API_IMAGE}:${IMAGE_TAG}"       yq -i '.services.api.image = strenv(API_NEW)' compose.yaml
+                        WORKER_NEW="${WORKER_IMAGE}:${IMAGE_TAG}" yq -i '.services.worker.image = strenv(WORKER_NEW)' compose.yaml
+
+                        git add compose.yaml
+                        git commit -m "ci(backend): set api and worker image tag to ${IMAGE_TAG}" || echo "nothing to commit"
+                        git push "$REPO_URL" "$TARGET_BRANCH"
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        always { sh 'docker logout || true' }
+    }
+}
